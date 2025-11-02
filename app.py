@@ -1,9 +1,6 @@
-# app.py
-from flask import Flask, request, jsonify
+from flask import Flask,send_from_directory, request, jsonify
 from flask_cors import CORS
-import psycopg2
-import psycopg2.extras
-from psycopg2 import sql
+import sqlite3
 import os
 import jwt
 from datetime import datetime, timedelta
@@ -13,30 +10,32 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DATABASE_URL = os.environ["DATABASE_URL"]
+DATABASE_PATH = os.environ["DATABASE_PATH"]
 JWT_SECRET = os.environ["JWT_SECRET"]
 JWT_ALGORITHM = os.environ["JWT_ALGORITHM"]
 JWT_EXP_MINUTES = int(os.environ["JWT_EXP_MINUTES"])
 
-app = Flask(__name__)
+app = Flask(__name__, static_folder="client/build", static_url_path="/")
 CORS(app)
 
 
+# --- DB connection helper ---
 def get_db_connection():
-    return psycopg2.connect(DATABASE_URL)
+    conn = sqlite3.connect(DATABASE_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
 
 
-# --- Authentication helpers ---
+# --- JWT helpers ---
 def create_token(user_id, username):
     now = datetime.utcnow()
     payload = {
         "sub": user_id,
         "username": username,
         "iat": now,
-        "exp": now + timedelta(minutes=JWT_EXP_MINUTES)
+        "exp": now + timedelta(minutes=JWT_EXP_MINUTES),
     }
     token = jwt.encode(payload, JWT_SECRET, algorithm=JWT_ALGORITHM)
-    # PyJWT >=2 returns str
     if isinstance(token, bytes):
         token = token.decode("utf-8")
     return token
@@ -49,23 +48,37 @@ def decode_token(token):
 def token_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
-        auth = request.headers.get("Authorization", None)
+        auth = request.headers.get("Authorization")
         if not auth:
             return jsonify({"error": "Authorization header missing"}), 401
         parts = auth.split()
         if len(parts) != 2 or parts[0].lower() != "bearer":
             return jsonify({"error": "Authorization header must be: Bearer <token>"}), 401
-        token = parts[1]
         try:
-            payload = decode_token(token)
-            # attach user info to request context
+            payload = decode_token(parts[1])
             request.user = {"id": payload.get("sub"), "username": payload.get("username")}
         except jwt.ExpiredSignatureError:
             return jsonify({"error": "Token expired"}), 401
         except jwt.InvalidTokenError:
             return jsonify({"error": "Invalid token"}), 401
         return f(*args, **kwargs)
+
     return decorated
+
+
+# --- Initialize DB if needed ---
+def ensure_users_table():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL
+    );
+    """)
+    conn.commit()
+    conn.close()
 
 
 # --- Auth endpoints ---
@@ -78,26 +91,22 @@ def register():
         return jsonify({"error": "username and password required"}), 400
 
     hashed = generate_password_hash(password)
-
-    conn = None
     try:
         conn = get_db_connection()
         cur = conn.cursor()
-        cur.execute("SELECT id FROM users WHERE username = %s;", (username,))
+        cur.execute("SELECT id FROM users WHERE username = ?", (username,))
         if cur.fetchone():
             return jsonify({"error": "username already exists"}), 400
         cur.execute(
-            "INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id;",
-            (username, hashed)
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username, hashed),
         )
-        user_id = cur.fetchone()[0]
         conn.commit()
-        return jsonify({"message": "user created", "user_id": user_id}), 201
-    except Exception as e:
+        return jsonify({"message": "user created"}), 201
+    except sqlite3.Error as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
 
 @app.route("/auth/login", methods=["POST"])
@@ -108,73 +117,72 @@ def login():
     if not username or not password:
         return jsonify({"error": "username and password required"}), 400
 
-    conn = None
     try:
         conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("SELECT id, username, password_hash FROM users WHERE username = %s;", (username,))
-        user = cur.fetchone()
-        if not user or not check_password_hash(user["password_hash"], password):
+        cur = conn.cursor()
+        cur.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
+        row = cur.fetchone()
+        if not row or not check_password_hash(row["password_hash"], password):
             return jsonify({"error": "invalid credentials"}), 401
-        token = create_token(user["id"], user["username"])
+        token = create_token(row["id"], row["username"])
         return jsonify({"access_token": token, "token_type": "bearer", "expires_in_minutes": JWT_EXP_MINUTES})
-    except Exception as e:
+    except sqlite3.Error as e:
         return jsonify({"error": str(e)}), 500
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
 
-# --- Protected DB endpoints (examples) ---
-@app.route("/health", methods=["GET"])
+# --- Protected SQL endpoints ---
+@app.route("/health")
 def health():
     return jsonify({"status": "ok"})
 
 
-@app.route("/tables", methods=["GET"])
+@app.route("/tables")
 @token_required
 def list_tables():
     conn = get_db_connection()
     try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT table_name 
-            FROM information_schema.tables 
-            WHERE table_schema = 'public'
-            ORDER BY table_name;
-        """)
-        tables = [r["table_name"] for r in cur.fetchall()]
+        cur = conn.cursor()
+        cur.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';")
+        tables = [r["name"] for r in cur.fetchall()]
         return jsonify({"tables": tables})
-    except Exception as e:
+    except sqlite3.Error as e:
         return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
 
-@app.route("/table/<table_name>", methods=["GET"])
+@app.route("/table/<table_name>")
 @token_required
 def table_info(table_name):
+    # basic validation for safe identifiers
     if not table_name.isidentifier():
         return jsonify({"error": "Invalid table name"}), 400
+
+    # restrict access to 'users' table
+    if table_name.lower() == "users":
+        return jsonify({"error": "Access to 'users' table is restricted"}), 403
+
     conn = get_db_connection()
     try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute("""
-            SELECT column_name, data_type
-            FROM information_schema.columns
-            WHERE table_name = %s;
-        """, (table_name,))
-        columns = cur.fetchall()
-        cur.execute(sql.SQL("SELECT * FROM {} LIMIT 5;").format(sql.Identifier(table_name)))
-        # Note: psycopg2.sql.Identifier isn't used above to keep code straightforward.
-        # We'll fetch rows via standard execute
+        cur = conn.cursor()
+        # fetch schema info
+        cur.execute(f"PRAGMA table_info({table_name});")
+        columns = [{"column_name": r[1], "data_type": r[2]} for r in cur.fetchall()]
+
+        # fetch sample rows
         cur.execute(f"SELECT * FROM {table_name} LIMIT 5;")
-        sample = cur.fetchall()
-        return jsonify({"columns": columns, "sample": sample})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        # convert rows to dicts
+        col_names = [desc[0] for desc in cur.description]
+        rows = [dict(zip(col_names, row)) for row in cur.fetchall()]
+
+        return jsonify({"columns": columns, "sample": rows})
+    except sqlite3.Error as e:
+        return jsonify({"error": str(e)}), 400
     finally:
         conn.close()
+
 
 
 @app.route("/execute", methods=["POST"])
@@ -184,32 +192,51 @@ def execute():
     if not payload or "query" not in payload:
         return jsonify({"error": "Missing JSON body with 'query'"}), 400
 
-    query = payload["query"]
-    q_upper = query.strip().upper()
+    query = payload["query"].strip()
+    q_upper = query.upper()
 
-    forbidden = ["ATTACH", "DETACH", "PRAGMA writable_schema", "sqlite_schema", "sqlite_master"]
+    # Forbidden SQL keywords and schema operations
+    forbidden = [
+        "ATTACH",
+        "DETACH",
+        "PRAGMA WRITABLE_SCHEMA",
+        "SQLITE_SCHEMA",
+        "SQLITE_MASTER"
+    ]
     if any(token in q_upper for token in forbidden):
         return jsonify({"error": "Forbidden operation in query"}), 403
 
+    # 🚫 Block any query touching the users table
+    if "USERS" in q_upper:
+        return jsonify({"error": "Access to 'users' table is restricted"}), 403
+
     conn = get_db_connection()
     try:
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur = conn.cursor()
         cur.execute(query)
+
+        # Handle SELECT / WITH queries (return result)
         if q_upper.startswith("SELECT") or q_upper.startswith("WITH"):
-            rows = cur.fetchall()
-            columns = [desc.name for desc in cur.description] if cur.description else []
+            rows = [dict(zip([col[0] for col in cur.description], row)) for row in cur.fetchall()]
+            columns = [col[0] for col in cur.description]
             return jsonify({"columns": columns, "rows": rows})
         else:
             conn.commit()
             return jsonify({"message": "Query executed", "rows_affected": cur.rowcount})
-    except psycopg2.Error as e:
+
+    except sqlite3.Error as e:
         return jsonify({"error": str(e)}), 400
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
     finally:
         conn.close()
 
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_react(path):
+    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+        return send_from_directory(app.static_folder, path)
+    else:
+        return send_from_directory(app.static_folder, "index.html")
 
 if __name__ == "__main__":
-    # debug mode reads .env via python-dotenv
+    ensure_users_table()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)

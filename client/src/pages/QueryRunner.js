@@ -66,6 +66,8 @@ export default function QueryRunner() {
       const res = await api.post("/execute", { query });
       setResult(res.data);
       showFeedback("success", "Query executed successfully");
+
+      await fetchTables();
     } catch (err) {
       const msg = err.response?.data?.error || "Query failed";
       setErrorMsg(msg);
@@ -76,18 +78,28 @@ export default function QueryRunner() {
   };
 
   const previewTable = async (table) => {
+    if (!table) return;
     setSelectedTable(table);
     setLoading(true);
     setErrorMsg("");
+    setResult(null);
+
     try {
       const res = await api.get(`/table/${table}`);
-      const cols = res.data.columns.map((c) => c.column_name);
-      const rows = res.data.sample;
+      const cols = (res.data.columns || []).map(
+        (c) => c.column_name || c.name || c.column
+      );
+      const rows = res.data.sample || [];
       setResult({ columns: cols, rows });
       showFeedback("info", `Previewing ${table}`);
-    } catch {
-      setErrorMsg("Failed to preview table.");
-      showFeedback("error", "Failed to preview table");
+    } catch (err) {
+      // ✅ use the backend message instead of static one
+      const msg =
+        err?.response?.data?.error ||
+        err?.message ||
+        `Failed to preview table: ${table}`;
+      setErrorMsg(msg);
+      showFeedback("error", msg);
     } finally {
       setLoading(false);
     }
@@ -104,8 +116,8 @@ export default function QueryRunner() {
       </Typography>
 
       <Grid container spacing={2}>
-        {/* SQL Editor */}
-        <Grid item xs={12} md={4}>
+        {/* SQL Editor - Full Width */}
+        <Grid item xs={12}>
           <Card sx={{ height: "100%" }}>
             <CardContent>
               <Typography variant="h6" mb={1}>
@@ -135,9 +147,6 @@ export default function QueryRunner() {
                     "Execute"
                   )}
                 </Button>
-                {/* <Typography variant="caption" sx={{ color: "text.secondary" }}>
-                  Tip: Click a table to preview
-                </Typography> */}
               </Box>
             </CardContent>
           </Card>
@@ -171,9 +180,8 @@ export default function QueryRunner() {
             </CardContent>
           </Card>
         </Grid>
-
         {/* Table Preview / Query Result / Error */}
-        <Grid item xs={12} md={4}>
+        <Grid item xs={12} md={12}>
           <Card
             sx={{ height: "100%", display: "flex", flexDirection: "column" }}
           >
