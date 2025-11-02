@@ -229,13 +229,21 @@ def execute():
     finally:
         conn.close()
 
+# @app.route("/", defaults={"path": ""})
+# @app.route("/<path:path>")
+# def serve_react(path):
+#     if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
+#         return send_from_directory(app.static_folder, path)
+#     else:
+#         return send_from_directory(app.static_folder, "index.html")
+
 @app.route("/", defaults={"path": ""})
 @app.route("/<path:path>")
-def serve_react(path):
-    if path != "" and os.path.exists(os.path.join(app.static_folder, path)):
-        return send_from_directory(app.static_folder, path)
+def serve_client(path):
+    if path != "" and os.path.exists(f"client_build/{path}"):
+        return send_from_directory("client_build", path)
     else:
-        return send_from_directory(app.static_folder, "index.html")
+        return send_from_directory("client_build", "index.html")
 
 if __name__ == "__main__":
     ensure_users_table()
