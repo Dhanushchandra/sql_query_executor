@@ -1,70 +1,97 @@
-# Getting Started with Create React App
+🧠 SQL Runner Dashboard
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+A full-stack Flask + React application for executing and previewing SQL queries securely — with JWT authentication, responsive UI (MUI), and SQLite as the database backend.
 
-## Available Scripts
+🚀 Features
 
-In the project directory, you can run:
+✅ Run and preview SQL queries securely
+✅ View existing tables and sample data
+✅ JWT-based user authentication
+✅ Responsive, modern UI built with Material UI
+✅ Error handling with detailed messages
+✅ Backend (Flask) + Frontend (React) containerized via Docker
 
-### `npm start`
+📂 Project Structure
+sql_query_executer/
+│
+├── app.py
+├── setup_db.py
+├── requirements.txt
+├── Dockerfile
+├── .env
+│── sql_runner.db
+│
+├── client/
+│ ├── src/
+│ ├── package.json
+│ ├── Dockerfile
+│ └── build/ (generated after React build)
+│
+└── docker-compose.yml
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+⚙️ Environment Variables
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+Your .env file (inside backend) should contain:
 
-### `npm test`
+DATABASE_PATH
+JWT_SECRET
+JWT_ALGORITHM
+JWT_EXP_MINUTES
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+🐳 Running with Docker Compose
+Step 1️⃣ — Build and start all containers
+docker-compose up --build
 
-### `npm run build`
+Step 2️⃣ — Access the app
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+Frontend: http://localhost:3003
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+Backend API: http://localhost:5000
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+🧰 Development Setup (Without Docker)
 
-### `npm run eject`
+If you prefer to run manually:
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+Backend
+cd backend
+python -m venv venv
+source venv/bin/activate # or venv\Scripts\activate on Windows
+pip install -r requirements.txt
+python setup_db.py
+python app.py
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Frontend
+cd client
+npm install
+npm start
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+🧪 Example Queries
+-- View all customers
+SELECT \* FROM Customers;
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+-- Join customers with their orders
+SELECT c.first_name, c.last_name, o.item, o.amount
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id;
 
-## Learn More
+-- Total amount spent per customer
+SELECT c.first_name, c.last_name, SUM(o.amount) AS total_spent
+FROM Customers c
+JOIN Orders o ON c.customer_id = o.customer_id
+GROUP BY c.customer_id;
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+🛑 Security Notes
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Queries on the users table are restricted.
 
-### Code Splitting
+Dangerous SQL operations like ATTACH, DETACH, PRAGMA writable_schema are blocked.
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+🧱 Tech Stack
 
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+| Layer      | Technology              |
+| ---------- | ----------------------- |
+| Frontend   | React + MUI             |
+| Backend    | Flask                   |
+| Database   | SQLite                  |
+| Auth       | JWT                     |
+| Deployment | Docker & Docker Compose |
